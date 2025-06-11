@@ -1,115 +1,190 @@
+﻿using System;
+using NUnit.Framework.Interfaces;
+using Unity.VisualScripting;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-public class GameManager : MonoBehaviour
+public class GameManager : Singelton<GameManager>
 {
-    public delegate PlayerController PlayerControllerDelegate(PlayerController playerInstance);
-    public event PlayerControllerDelegate OnPlayerControllerCreated;
+    // === ADJUST THESE TO MATCH YOUR BUILD SETTINGS ===
+    private const int TitleSceneBuildIndex = 0;
+    private const int MainSceneBuildIndex = 1;
+    // ==================================================
 
-    #region Singleton Pattern
-    private static GameManager _instance;
-    public static GameManager Instance => _instance;
+    public int Score { get; private set; }
+    public int Coins { get; private set; }
+    public int Lives { get; private set; }
 
-    void Awake()
+    public bool IsMarioBig { get; private set; } = false;
+    public void SetMarioBig(bool big) => IsMarioBig = big;
+
+    // Fired whenever score/coins/lives change
+    public event Action<int, int, int> OnHUDChanged;
+    // Fired when the player runs out of lives
+    public event Action OnGameOver;
+
+    // Reference to the Game Over UI Canvas in the Main (game) scene
+    private GameObject _gameOverCanvas;
+    // Tracks whether we are currently in “Game Over” state
+    private bool _isGameOver = false;
+
+    protected override void Awake()
     {
-        if (!_instance)
-        {
-            _instance = this;
-            DontDestroyOnLoad(gameObject);
-            return;
-        }
+        base.Awake();
 
-        Destroy(gameObject);
+        // Initialize stats at the very start
+        Lives = 3;
+        Score = 0;
+        Coins = 0;
+
+        // Listen for scene loads so we can grab the GameOverCanvas reference
+        SceneManager.sceneLoaded += OnSceneLoaded;
+
+        // Subscribe internal handler so that when TriggerGameOver() fires, we show UI
+        OnGameOver += HandleGameOver;
     }
-    #endregion
 
-    #region Player Controller Info
-    [SerializeField] private PlayerController playerPrefab;
-    private PlayerController playerInstance;
-    public PlayerController PlayerInstance => playerInstance;
-    private Vector3 currentCheckpoint;
-    #endregion
-
-    #region Game Stats
-    public int maxLives = 5;
-    private int lives = 3;
-    public int Lives
+    private void OnDestroy()
     {
-        get
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+        OnGameOver -= HandleGameOver;
+    }
+
+    private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        // When MainScene (by build index) is loaded, find the GameOverCanvas and deactivate it
+        if (scene.buildIndex == MainSceneBuildIndex)
         {
-            return lives;
-        }
-        set
-        {
-            if (value < 0)
+            _gameOverCanvas = GameObject.Find("GameOver_Panel");
+            if (_gameOverCanvas != null)
             {
-                GameOver();
-                return;
+                _gameOverCanvas.SetActive(false);
             }
-            if (lives > value)
-            {
-                Respawn();
-            }
-            lives = value;
-            Debug.Log("Lives have been set to: " + lives);
+
+            // Reset the Game Over flag so ESC won't fire immediately
+            _isGameOver = false;
         }
     }
-    #endregion
 
-    // Start is called once before the first execution of Update after the MonoBehaviour is created
-    void Start()
+    private void Update()
     {
-        // Initialize lives or any other game state here
-        if (maxLives <= 0)
-            maxLives = 5; // Default value if not set
-
-        Lives = maxLives;
+        // If we are in Game Over, pressing ESC returns to Title scene
+        if (_isGameOver && Input.GetKeyDown(KeyCode.Escape))
+        {
+            SceneManager.LoadScene(TitleSceneBuildIndex);
+            _isGameOver = false;
+        }
     }
 
-    // Update is called once per frame
-    void Update()
-    {
-        if (Input.GetKeyDown(KeyCode.Escape))
-        {
-            string currentSceneName = SceneManager.GetActiveScene().name;
+    #region PUBLIC METHODS FOR GAMEPLAY
 
-            string loadedSceneName = currentSceneName == "Game" ? "Title" : "Game";
-            SceneManager.LoadScene(loadedSceneName);
+    public void AddScore(int points)
+    {
+        Score += points;
+        OnHUDChanged?.Invoke(Score, Coins, Lives);
+    }
+
+    /*public void CollectItem(ItemData itemData)
+    {
+        switch (itemData.itemType)
+        {
+            case ItemType.Coin:
+                Coins++;
+                Score += 100;
+                break;
+            case ItemType.OneUp:
+                Lives++;
+                break;
+            case ItemType.PowerUp:
+                ApplyPowerUp(itemData.powerUpType);
+                break;
         }
 
-        if (Input.GetKeyDown(KeyCode.Backspace))
+        OnHUDChanged?.Invoke(Score, Coins, Lives);
+    }
+
+    /*private void ApplyPowerUp(PowerUpType type)
+    {
+        switch (type)
         {
+            case PowerUpType.SuperMushroom:
+                MarioSizeController.Instance.Grow();
+                playerHealthController.Instance.HealPlayer();
+                break;
+            case PowerUpType.FireFlower:
+                MarioSizeController.Instance.GainFireFlower();
+                break;
+            case PowerUpType.Star:
+                MarioSizeController.Instance.StartStarInvincibility();
+                break;
+        }
+    }*/
+
+    public void PlayerDamaged()
+    {
+        if (!IsMarioBig)
+        {
+            // small Mario → lose a life
             Lives--;
-            //Debug.Log("Lives decremented, current lives: " + lives);
+            OnHUDChanged?.Invoke(Score, Coins, Lives);
+
+            if (Lives > 0)
+            {
+               // RespawnManager.Instance.RespawnPlayer();
+            }
+            else
+            {
+                // no lives left → trigger death animation then Game Over
+                PlayerController.Instance.Die();
+            }
+        }        
+        else
+        {
+            // big Mario → shrink back to small
+            //MarioSizeController.Instance.Shrink();
         }
     }
 
-    private void Respawn()
+    // Called by PlayerController.OnDeathAnimationComplete()
+    public void TriggerGameOver()
     {
-        Debug.Log("Respawn goes here");
-        //TODO: Respawn animation then reset player position
-        playerInstance.transform.position = currentCheckpoint;
+        OnGameOver?.Invoke();
     }
 
-    private void GameOver()
+    /// <summary>
+    /// Call this from your Title‐scene “Play” button.
+    /// Resets all stats, then loads the Main scene by build index.
+    /// </summary>
+    public void StartNewGame()
     {
-        Debug.Log("Game Over goes here");
+        ResetStats();
+        SceneManager.LoadScene(MainSceneBuildIndex);
     }
 
-    public void InstantatePlayer(Vector3 spawnPos)
-    {
-        playerInstance = Instantiate(playerPrefab, spawnPos, Quaternion.identity);
-        currentCheckpoint = spawnPos;
+    #endregion
 
-        //This is where we invoke the event to notify other systems that the player controller has been created
-        //if (OnPlayerControllerCreated != null) is the same as OnPlayerControllerCreated?.Invoke(playerInstance);
-        //? is the null-conditional operator, which checks if OnPlayerControllerCreated is not null before invoking it.
-        OnPlayerControllerCreated?.Invoke(playerInstance);
+    #region INTERNALS
+
+    private void HandleGameOver()
+    {
+        // Show the Game Over canvas (if found in OnSceneLoaded)
+        if (_gameOverCanvas != null)
+        {
+            _gameOverCanvas.SetActive(true);
+        }
+
+        // Enable ESC-to-return
+        _isGameOver = true;
     }
 
-    public void SetCheckpoint(Vector3 checkpointPos)
+    private void ResetStats()
     {
-        currentCheckpoint = checkpointPos;
-        Debug.Log("Checkpoint set at: " + currentCheckpoint);
+        Lives = 3;
+        Score = 0;
+        Coins = 0;
+        IsMarioBig = false;
+        OnHUDChanged?.Invoke(Score, Coins, Lives);
     }
+
+    #endregion
 }

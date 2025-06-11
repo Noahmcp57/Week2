@@ -5,7 +5,7 @@ using UnityEngine;
 
 [RequireComponent(typeof(Rigidbody2D), typeof(SpriteRenderer), typeof(Animator))]
 [RequireComponent(typeof(Collider2D))]
-public class PlayerController : MonoBehaviour
+public class PlayerController : Singelton<PlayerController>
 {
     //Public modifiable properties
     [Range(3, 10)]
@@ -140,6 +140,26 @@ public class PlayerController : MonoBehaviour
         //this is good as the sr.flipX is only changed when it needs too
         //if ((hInput > 0 && sr.flipX) || (hInput < 0 && !sr.flipX)) sr.flipX = !sr.flipX;
     }
+    public bool isDead;
+    public bool stopInput;
+    public Rigidbody2D rb2;
+
+
+    public void Die()
+
+    {
+        if (isDead) return;
+        isDead = true;
+
+        // stop movement, trigger death anim
+        rb2.linearVelocity = Vector2.zero;
+        stopInput = true;
+        anim.SetTrigger("Dead");
+
+        //StartCoroutine(OnDeathAnimationComplete());
+    }
+
+
 
     public void OnCollisionEnter2D(Collision2D collision)
     {
