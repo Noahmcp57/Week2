@@ -21,6 +21,8 @@ public class PlayerController : Singelton<PlayerController>
 
     private Coroutine speedChange = null;
 
+   
+
     public void SpeedChange()
     {
         if (speedChange != null)
@@ -85,6 +87,8 @@ public class PlayerController : Singelton<PlayerController>
         sr = GetComponent<SpriteRenderer>();
         anim = GetComponent<Animator>();
         groundCheck = new GroundCheck(LayerMask.GetMask("Ground"), GetComponent<Collider2D>(), rb, ref groundCheckRadius);
+
+        AudioManager.Instance.PlayMusic("Game");
 
         //SetLives(GetLives() + 1);
 
